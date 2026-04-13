@@ -30,8 +30,7 @@ defaults:
   max_num_batched_tokens: 8192
 
 # Environment variables to set in the container
-env:
-  VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8: "1"
+env: {}
 
 # The vLLM serve command template
 # Uses MXFP4 quantization for memory efficiency
