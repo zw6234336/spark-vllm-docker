@@ -39,6 +39,7 @@ LAUNCH_SCRIPT_MODE="false"
 MOUNT_CACHE_DIRS="true"
 BUILD_JOBS=""
 NON_PRIVILEGED_MODE="false"
+KEEP_ENTRYPOINT="false"
 MEM_LIMIT_GB="110"
 MEM_SWAP_LIMIT_GB=""
 PIDS_LIMIT="4096"
@@ -62,6 +63,7 @@ usage() {
     echo "  --master-port   Port for cluster coordination: Ray head port or PyTorch distributed master port (default: 29501)"
     echo "  --no-ray        No-Ray mode: run multi-node vLLM without Ray (uses PyTorch distributed backend)"
     echo "  --no-cache-dirs Do not mount default cache directories (~/.cache/vllm, ~/.cache/flashinfer, ~/.triton)"
+    echo "  --keep-entrypoint Keep the Docker image entrypoint instead of clearing it by default"
     echo "  -d              Daemon mode (only for 'start' action)"
     echo "  --non-privileged Run in non-privileged mode (removes --privileged and --ipc=host)"
     echo "  --mem-limit-gb  Memory limit in GB (default: 110, only with --non-privileged)"
@@ -124,6 +126,7 @@ while [[ "$#" -gt 0 ]]; do
         --solo) SOLO_MODE="true" ;;
         --no-ray) NO_RAY_MODE="true" ;;
         --no-cache-dirs) MOUNT_CACHE_DIRS="false" ;;
+        --keep-entrypoint) KEEP_ENTRYPOINT="true" ;;
         --non-privileged) NON_PRIVILEGED_MODE="true" ;;
         --mem-limit-gb) MEM_LIMIT_GB="$2"; shift ;;
         --mem-swap-limit-gb) MEM_SWAP_LIMIT_GB="$2"; shift ;;
@@ -846,7 +849,12 @@ start_cluster() {
     fi
 
     # Build docker run arguments based on mode
-    local docker_args_common="--gpus all -d --rm --network host --name $CONTAINER_NAME $DOCKER_ARGS $IMAGE_NAME"
+    local docker_entrypoint_args=""
+    if [[ "$KEEP_ENTRYPOINT" != "true" ]]; then
+        docker_entrypoint_args="--entrypoint="
+    fi
+
+    local docker_args_common="--gpus all -d --rm --network host --name $CONTAINER_NAME $docker_entrypoint_args $DOCKER_ARGS $IMAGE_NAME"
     local docker_caps_args=""
     local docker_resource_args=""
 
@@ -977,8 +985,10 @@ exec_no_ray_cluster() {
             worker_cmd="$clean --nnodes $total_nodes --node-rank $rank --master-addr $HEAD_IP --master-port $MASTER_PORT --headless"
         fi
         echo "Launching worker (rank $rank) on $worker..."
-        ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$worker" \
-            "docker exec -d $CONTAINER_NAME bash -c \"$worker_cmd >> /proc/1/fd/1 2>&1\""
+        local remote_payload remote_cmd
+        remote_payload="$worker_cmd >> /proc/1/fd/1 2>&1"
+        printf -v remote_cmd 'docker exec -d %q bash -c %q' "$CONTAINER_NAME" "$remote_payload"
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$worker" "$remote_cmd"
         (( rank++ ))
     done
 
